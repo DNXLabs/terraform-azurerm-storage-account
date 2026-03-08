@@ -1,11 +1,6 @@
-variable "naming" {
-  description = "Azure taxonomy inputs."
-  type = object({
-    org      = string
-    env      = string
-    region   = string
-    workload = string
-  })
+variable "name" {
+  description = "Resource name prefix used for all resources in this module."
+  type        = string
 }
 
 variable "resource_group" {
@@ -18,9 +13,20 @@ variable "resource_group" {
 }
 
 variable "tags" {
-  description = "Extra tags merged with default taxonomy tags."
+  description = "Extra tags merged with default tags."
   type        = map(string)
   default     = {}
+}
+
+variable "diagnostics" {
+  description = "Optional Azure Monitor diagnostic settings."
+  type = object({
+    enabled                        = optional(bool, false)
+    log_analytics_workspace_id     = optional(string)
+    storage_account_id             = optional(string)
+    eventhub_authorization_rule_id = optional(string)
+  })
+  default = {}
 }
 
 variable "storage" {
@@ -34,11 +40,11 @@ variable "storage" {
     account_replication_type = optional(string, "LRS")
     access_tier              = optional(string, "Hot")
 
-    public_network_access_enabled      = optional(bool, false)
-    allow_nested_items_to_be_public    = optional(bool, false)
-    shared_access_key_enabled          = optional(bool, true)
-    min_tls_version                    = optional(string, "TLS1_2")
-    https_traffic_only_enabled         = optional(bool, true)
+    public_network_access_enabled   = optional(bool, false)
+    allow_nested_items_to_be_public = optional(bool, false)
+    shared_access_key_enabled       = optional(bool, true)
+    min_tls_version                 = optional(string, "TLS1_2")
+    https_traffic_only_enabled      = optional(bool, true)
 
     is_hns_enabled = optional(bool, false)
     nfsv3_enabled  = optional(bool, false)

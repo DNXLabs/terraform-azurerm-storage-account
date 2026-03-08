@@ -13,24 +13,23 @@ This module provides a comprehensive solution for Azure Storage infrastructure w
 - **Private DNS Zones**: Automatic creation and management of private DNS zones
 - **DNS Zone Auto-Discovery**: Reuses existing DNS zones when available
 - **VNet Link Management**: Automatic VNet linking to private DNS zones
+- **Network Rules**: Optional network access rules with service bypass and IP whitelisting
 - **Resource Group Flexibility**: Create new or use existing resource groups
-- **Tagging Strategy**: Built-in taxonomy-based tagging with custom tag support
+- **Tagging Strategy**: Built-in default tagging with custom tag support
 - **Secure by Default**: Public access disabled by default, HTTPS-only traffic enforced
+- **Diagnostic Settings**: Optional Azure Monitor integration (Log Analytics, Storage, Event Hub)
 
 ## Usage
 
-### Basic Example
+### Example 1 — Non-Prod (Public Access, Simple Config)
+
+A simple storage account for development with public access and network rules.
 
 ```hcl
 module "storage" {
   source = "./modules/storage"
 
-  naming = {
-    org      = "mycompany"
-    env      = "dev"
-    region   = "aue"
-    workload = "app"
-  }
+  name = "mycompany-dev-aue-app"
 
   resource_group = {
     create   = true
@@ -47,7 +46,7 @@ module "storage" {
     account_tier             = "Standard"
     account_replication_type = "LRS"
     access_tier              = "Hot"
-    
+
     public_network_access_enabled = true
   }
 
@@ -71,8 +70,8 @@ module "storage" {
     default_action = "Deny"
     bypass         = ["AzureServices"]
     ip_rules       = [
-      "203.0.113.0/24",  # Office IP range
-      "198.51.100.10"    # Specific allowed IP
+      "203.0.113.0/24",
+      "198.51.100.10"
     ]
   }
 
@@ -82,18 +81,15 @@ module "storage" {
 }
 ```
 
-### Complete Example with Private Endpoints
+### Example 2 — Production (Private Endpoints, Data Lake, GRS)
+
+A production storage account with private endpoints, Data Lake Gen2 enabled, and geo-redundant replication.
 
 ```hcl
 module "storage" {
   source = "./modules/storage"
 
-  naming = {
-    org      = "contoso"
-    env      = "prod"
-    region   = "aue"
-    workload = "data"
-  }
+  name = "contoso-prod-aue-data"
 
   resource_group = {
     create   = true
@@ -111,16 +107,16 @@ module "storage" {
     account_tier             = "Standard"
     account_replication_type = "GRS"
     access_tier              = "Hot"
-    
+
     # Security settings
     public_network_access_enabled   = false
     allow_nested_items_to_be_public = false
     shared_access_key_enabled       = true
     min_tls_version                 = "TLS1_2"
     https_traffic_only_enabled      = true
-    
+
     # Advanced features
-    is_hns_enabled = true  # Hierarchical namespace for Data Lake
+    is_hns_enabled = true  # Hierarchical namespace for Data Lake Gen2
     nfsv3_enabled  = false
   }
 
@@ -153,24 +149,22 @@ module "storage" {
   # Private endpoint configuration
   private = {
     enabled = true
-    
-    # Enable private endpoints for specific services
+
     endpoints = {
       blob = true
       file = true
     }
-    
+
     pe_subnet_id = "/subscriptions/xxxx/resourceGroups/rg-network/providers/Microsoft.Network/virtualNetworks/vnet-prod/subnets/snet-pe"
     vnet_id      = "/subscriptions/xxxx/resourceGroups/rg-network/providers/Microsoft.Network/virtualNetworks/vnet-prod"
-    
-    # DNS configuration
+
     dns = {
       create_zone      = true
       create_vnet_link = true
-      
+
       resource_group = {
-        create   = false
-        name     = "rg-contoso-prod-aue-dns-001"
+        create = false
+        name   = "rg-contoso-prod-aue-dns-001"
       }
     }
   }
@@ -179,13 +173,17 @@ module "storage" {
     resource_group_name = "rg-contoso-prod-aue-data-001"
     location            = "australiaeast"
   }
+
+  diagnostics = {
+    enabled                    = true
+    log_analytics_workspace_id = "/subscriptions/xxxx/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/law-prod"
+  }
 }
 ```
 
-
 ### Using YAML Variables
 
-Create a `vars/storage.yaml` file:
+Create a `vars/platform.yaml` file:
 
 ```yaml
 azure:
@@ -200,11 +198,7 @@ network_lookup:
 platform:
   storages:
     appdata:
-      naming:
-        org: managed-services
-        env: lab
-        region: aue
-        workload: stg
+      name: managed-services-lab-aue-stg
 
       tags:
         costCenter: "staging"
@@ -251,11 +245,7 @@ platform:
             location: australiaeast
 
     sharedfiles:
-      naming:
-        org: managed-services
-        env: lab
-        region: aue
-        workload: files
+      name: managed-services-lab-aue-files
 
       resource_group:
         create: false
@@ -273,12 +263,16 @@ platform:
 
       private:
         enabled: false
-           
 ```
 
-## Then use in your Terraform:
+Then use in your Terraform:
 
-#Filter virtual network and subnet for Private Endpoint (PE)
+```hcl
+locals {
+  workspace = yamldecode(file("vars/${terraform.workspace}.yaml"))
+}
+
+# Filter virtual network and subnet for Private Endpoint (PE)
 data "azurerm_resource_group" "network" {
   name = local.workspace.network_lookup.resource_group_name
 }
@@ -294,16 +288,13 @@ data "azurerm_subnet" "pe" {
   resource_group_name  = data.azurerm_resource_group.network.name
 }
 
-
-```hcl
 module "storage" {
   for_each = try(local.workspace.platform.storages, {})
 
   source = "./modules/storage"
 
-  naming = each.value.naming
-  tags   = try(each.value.tags, {})
-
+  name           = each.value.name
+  tags           = try(each.value.tags, {})
   resource_group = each.value.resource_group
 
   storage     = each.value.storage
@@ -317,12 +308,13 @@ module "storage" {
       vnet_id      = data.azurerm_virtual_network.this.id
     } : {}
   )
-  
+
   private_endpoint = {
     resource_group_name = data.azurerm_resource_group.network.name
     location            = data.azurerm_resource_group.network.location
   }
 
+  diagnostics = try(each.value.diagnostics, {})
 }
 ```
 
@@ -333,12 +325,12 @@ Storage account names must be:
 - Lowercase letters and numbers only
 - Globally unique across Azure
 
-The module automatically generates names based on taxonomy:
+The module automatically generates names based on the prefix:
 ```
-{org}{env}{region}{workload}{suffix}
+st{name_sanitized}{suffix}
 ```
 
-Example: `contosoprodauedata001`
+Example: `stcontosoprodauedata001`
 
 You can override with a custom name:
 ```hcl
@@ -459,32 +451,19 @@ file_shares = [
 
 ## Naming Convention
 
-Resources are named using the taxonomy pattern: `{org}-{env}-{region}-{workload}`
+Resources are named using the prefix pattern: `{name}`
 
-Example with naming:
-```hcl
-naming = {
-  org      = "contoso"
-  env      = "prod"
-  region   = "aue"
-  workload = "data"
-}
-```
-
-Generates resources like:
-- Storage Account: `contosoprodauedata001`
-- Private Endpoint: `contoso-prod-aue-data-pe-stg-blob`
-- Private Service Connection: `contoso-prod-aue-data-psc-stg-blob`
+Example:
+- Storage Account: `st{name_sanitized}001`
+- Private Endpoint: `pe-blob-st{name_sanitized}001`
+- Private Service Connection: `psc-blob-st{name_sanitized}001`
 
 ## Tags
 
-The module automatically applies taxonomy-based tags and merges with custom tags:
+The module automatically applies default tags and merges with custom tags:
 
 **Default tags** (applied automatically):
-- `org`: from naming.org
-- `env`: from naming.env
-- `region`: from naming.region
-- `workload`: from naming.workload
+- `name`: from var.name
 - `managedBy`: "terraform"
 
 **Custom tags** (merged):
@@ -505,87 +484,35 @@ tags = {
 | `private_dns` | Private DNS zones information (if private endpoints enabled) |
 | `private_endpoints` | Map of private endpoints (if enabled) |
 
-### Output Examples
-
-```hcl
-# Access storage account name
-output "resource_group_name" {
-  value = local.rg_name
-}
-
-output "storage_account" {
-  value = {
-    id   = azurerm_storage_account.this.id
-    name = azurerm_storage_account.this.name
-  }
-}
-
-output "private_dns" {
-  value = local.private_enabled ? {
-    resource_group_name = local.dns_rg_name
-    zones               = { for k, v in local.pe_services_enabled : k => local.private_dns_zone_id[k] }
-  } : null
-}
-
-output "private_endpoints" {
-  value = local.private_enabled ? {
-    for k, v in local.pe_services_enabled :
-    k => {
-      id   = azurerm_private_endpoint.this[k].id
-      name = azurerm_private_endpoint.this[k].name
-    }
-  } : {}
-}
-```
-
 ## Requirements
 
 | Name | Version |
 |------|---------|
 | terraform | >= 1.6.0 |
-| azurerm | ~> 4.58 |
+| azurerm | >= 4.0.0 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| azurerm | ~> 4.58 |
+| azurerm | >= 4.0.0 |
 
 ## Inputs
 
 | Name | Description | Type | Required |
 |------|-------------|------|----------|
-| `naming` | Azure taxonomy inputs (org, env, region, workload) | object | yes |
+| `name` | Resource name prefix for all resources | string | yes |
 | `resource_group` | Resource group configuration | object | yes |
 | `storage` | Storage account configuration | object | yes |
 | `private` | Private endpoint configuration | object | yes |
-| `private_endpoint` | Private endpoint resource group placement | object | yes |
-| `tags` | Extra tags merged with default taxonomy tags | map(string) | no |
+| `tags` | Extra tags merged with default tags | map(string) | no |
 | `containers` | List of blob containers to create | list(object) | no |
 | `file_shares` | List of file shares to create | list(object) | no |
+| `private_endpoint` | Private endpoint resource group placement | object | no |
+| `network_rules` | Network access rules | object | no |
+| `diagnostics` | Azure Monitor diagnostic settings | object | no |
 
 ### Detailed Input Specifications
-
-#### naming
-
-```hcl
-object({
-  org      = string  # Organization name
-  env      = string  # Environment (dev, lab, prod)
-  region   = string  # Region abbreviation (aue, eus, weu)
-  workload = string  # Workload identifier
-})
-```
-
-#### resource_group
-
-```hcl
-object({
-  create   = bool             # Create new RG or use existing
-  name     = string           # Resource group name
-  location = optional(string) # Required if create = true
-})
-```
 
 #### storage
 
@@ -593,18 +520,18 @@ object({
 object({
   name        = optional(string)      # Override auto-generated name
   name_suffix = optional(string, "001")
-  
+
   account_kind             = optional(string, "StorageV2")
   account_tier             = optional(string, "Standard")
   account_replication_type = optional(string, "LRS")
   access_tier              = optional(string, "Hot")
-  
+
   public_network_access_enabled   = optional(bool, false)
   allow_nested_items_to_be_public = optional(bool, false)
   shared_access_key_enabled       = optional(bool, true)
   min_tls_version                 = optional(string, "TLS1_2")
   https_traffic_only_enabled      = optional(bool, true)
-  
+
   is_hns_enabled = optional(bool, false)  # Data Lake Gen2
   nfsv3_enabled  = optional(bool, false)  # NFSv3 support
 })
@@ -633,25 +560,36 @@ list(object({
 ```hcl
 object({
   enabled = bool
-  
+
   endpoints = optional(map(bool), {
     blob = true
     file = true
   })
-  
+
   pe_subnet_id = optional(string)  # Required if enabled = true
   vnet_id      = optional(string)  # Required if enabled = true
-  
+
   dns = optional(object({
     create_zone      = optional(bool, true)
     create_vnet_link = optional(bool, true)
-    
+
     resource_group = optional(object({
       create   = bool
       name     = string
       location = optional(string)
     }))
   }), {})
+})
+```
+
+#### network_rules
+
+```hcl
+object({
+  default_action             = optional(string, "Allow")
+  bypass                     = optional(list(string), ["AzureServices"])
+  ip_rules                   = optional(list(string), [])
+  virtual_network_subnet_ids = optional(list(string), [])
 })
 ```
 
@@ -674,7 +612,6 @@ object({
 6. **Naming**: Let the module auto-generate names to ensure consistency
 7. **Tagging**: Always include compliance and cost allocation tags
 8. **Quotas**: Set appropriate file share quotas based on actual needs
-
 
 ## License
 

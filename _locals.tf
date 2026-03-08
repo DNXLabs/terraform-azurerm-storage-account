@@ -1,21 +1,19 @@
 locals {
-  prefix = "${var.naming.org}-${var.naming.env}-${var.naming.region}-${var.naming.workload}"
+  prefix = var.name
 
   default_tags = {
-    org       = var.naming.org
-    env       = var.naming.env
-    region    = var.naming.region
-    workload  = var.naming.workload
+    name      = var.name
     managedBy = "terraform"
   }
 
   tags = merge(local.default_tags, var.tags)
 
-  rg_name = var.resource_group.create ? azurerm_resource_group.this[0].name : data.azurerm_resource_group.existing[0].name
-  rg_loc  = var.resource_group.create ? azurerm_resource_group.this[0].location : data.azurerm_resource_group.existing[0].location
+  rg_name = var.resource_group.create ? azurerm_resource_group.this["this"].name : data.azurerm_resource_group.existing[0].name
+  rg_loc  = var.resource_group.create ? azurerm_resource_group.this["this"].location : (try(var.resource_group.location, null) != null ? var.resource_group.location : data.azurerm_resource_group.existing[0].location)
 
-  base_sa_name_raw = "${var.naming.org}${var.naming.env}${var.naming.region}${var.naming.workload}${try(var.storage.name_suffix, "001")}"
-  base_sa_name     = substr(replace(lower(local.base_sa_name_raw), "/[^0-9a-z]/", ""), 0, 24)
+  # Storage Account name: alphanumeric only, 3-24 chars, globally unique
+  base_sa_name_raw = replace(lower("st${local.prefix}${try(var.storage.name_suffix, "001")}"), "/[^0-9a-z]/", "")
+  base_sa_name     = substr(local.base_sa_name_raw, 0, 24)
 
   storage_account_name = coalesce(try(var.storage.name, null), local.base_sa_name)
 
@@ -43,8 +41,9 @@ locals {
   pe_services_enabled = local.private_enabled ? {
     for k, enabled in try(var.private.endpoints, {}) :
     k => merge(local.pe_catalog[k], {
-      pe_name  = "${local.prefix}-pe-stg-${k}"
-      psc_name = "${local.prefix}-psc-stg-${k}"
+      pe_name  = "pe-${k}-${local.storage_account_name}"
+      psc_name = "psc-${k}-${local.storage_account_name}"
+      nic_name = "nic-pe-${k}-${local.storage_account_name}"
     })
     if enabled && contains(keys(local.pe_catalog), k)
   } : {}
@@ -80,7 +79,7 @@ locals {
 
   dns_zone_should_create = {
     for k, v in local.pe_services_enabled :
-    k => (local.dns_create_zone && !local.dns_zone_exists[k])
+    k => local.dns_create_zone
   }
 
   vnet_link_exists = {
@@ -90,7 +89,7 @@ locals {
 
   vnet_link_should_create = {
     for k, v in local.pe_services_enabled :
-    k => (local.dns_create_vnet_link && !local.vnet_link_exists[k])
+    k => local.dns_create_vnet_link
   }
 
   private_dns_zone_id = {
@@ -102,4 +101,6 @@ locals {
 
   pe_rg_name = local.private_enabled ? var.private_endpoint.resource_group_name : null
   pe_rg_loc  = local.private_enabled ? coalesce(try(var.private_endpoint.location, null), local.rg_loc) : null
+
+  diag_enabled = try(var.diagnostics.enabled, false) && (try(var.diagnostics.log_analytics_workspace_id, null) != null || try(var.diagnostics.storage_account_id, null) != null || try(var.diagnostics.eventhub_authorization_rule_id, null) != null)
 }
