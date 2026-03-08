@@ -1,12 +1,12 @@
 resource "azurerm_resource_group" "this" {
-  count    = var.resource_group.create ? 1 : 0
-  name     = var.resource_group.name
-  location = var.resource_group.location
+  for_each = var.resource_group.create ? { "this" = var.resource_group } : {}
+  name     = each.value.name
+  location = each.value.location
   tags     = local.tags
 }
 
 resource "azurerm_resource_group" "dns" {
-  count    = local.dns_rg_create ? 1 : 0
+  for_each = local.dns_rg_create ? { "this" = true } : {}
   name     = local.dns_rg_name
   location = local.dns_rg_loc
   tags     = local.tags
@@ -41,6 +41,15 @@ resource "azurerm_storage_account" "this" {
   }
 
   tags = local.tags
+
+  blob_properties {
+    delete_retention_policy {
+      days = 1 # Minimal retention for easy cleanup
+    }
+    container_delete_retention_policy {
+      days = 1 # Minimal retention for easy cleanup
+    }
+  }
 }
 
 resource "azurerm_storage_container" "this" {
@@ -95,8 +104,9 @@ resource "azurerm_private_endpoint" "this" {
   name                = each.value.pe_name
   location            = local.pe_rg_loc
   resource_group_name = local.pe_rg_name
-  subnet_id           = local.pe_subnet_id
-  tags                = local.tags
+  subnet_id                     = local.pe_subnet_id
+  custom_network_interface_name = each.value.nic_name
+  tags                          = local.tags
 
   private_service_connection {
     name                           = each.value.psc_name
@@ -108,5 +118,45 @@ resource "azurerm_private_endpoint" "this" {
   private_dns_zone_group {
     name                 = "pdzg-${each.key}"
     private_dns_zone_ids = [local.private_dns_zone_id[each.key]]
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "storage_account" {
+  for_each = local.diag_enabled ? { "this" = true } : {}
+
+  name                           = "diag-${local.storage_account_name}"
+  target_resource_id             = azurerm_storage_account.this.id
+  log_analytics_workspace_id     = try(var.diagnostics.log_analytics_workspace_id, null)
+  storage_account_id             = try(var.diagnostics.storage_account_id, null)
+  eventhub_authorization_rule_id = try(var.diagnostics.eventhub_authorization_rule_id, null)
+
+  enabled_metric {
+    category = "Capacity"
+  }
+
+  enabled_metric {
+    category = "Transaction"
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "blob" {
+  for_each = local.diag_enabled ? { "this" = true } : {}
+
+  name                           = "diag-${local.storage_account_name}-blob"
+  target_resource_id             = "${azurerm_storage_account.this.id}/blobServices/default"
+  log_analytics_workspace_id     = try(var.diagnostics.log_analytics_workspace_id, null)
+  storage_account_id             = try(var.diagnostics.storage_account_id, null)
+  eventhub_authorization_rule_id = try(var.diagnostics.eventhub_authorization_rule_id, null)
+
+  enabled_log { category = "StorageRead" }
+  enabled_log { category = "StorageWrite" }
+  enabled_log { category = "StorageDelete" }
+
+  enabled_metric {
+    category = "Capacity"
+  }
+
+  enabled_metric {
+    category = "Transaction"
   }
 }
