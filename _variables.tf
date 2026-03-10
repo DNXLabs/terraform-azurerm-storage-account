@@ -33,7 +33,6 @@ variable "storage" {
   description = "Storage Account configuration."
   type = object({
     name        = optional(string)
-    name_suffix = optional(string, "001")
 
     account_kind             = optional(string, "StorageV2")
     account_tier             = optional(string, "Standard")
