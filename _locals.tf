@@ -12,10 +12,7 @@ locals {
   rg_loc  = var.resource_group.create ? azurerm_resource_group.this["this"].location : (try(var.resource_group.location, null) != null ? var.resource_group.location : data.azurerm_resource_group.existing[0].location)
 
   # Storage Account name: alphanumeric only, 3-24 chars, globally unique
-  base_sa_name_raw = replace(lower("st${local.prefix}${try(var.storage.name_suffix, "001")}"), "/[^0-9a-z]/", "")
-  base_sa_name     = substr(local.base_sa_name_raw, 0, 24)
-
-  storage_account_name = coalesce(try(var.storage.name, null), local.base_sa_name)
+  storage_account_name = substr(replace(lower(var.name), "/[^0-9a-z]/", ""), 0, 24)
 
   private_enabled = try(var.private.enabled, false)
 
@@ -41,9 +38,9 @@ locals {
   pe_services_enabled = local.private_enabled ? {
     for k, enabled in try(var.private.endpoints, {}) :
     k => merge(local.pe_catalog[k], {
-      pe_name  = "pe-${k}-${local.storage_account_name}"
-      psc_name = "psc-${k}-${local.storage_account_name}"
-      nic_name = "nic-pe-${k}-${local.storage_account_name}"
+      pe_name  = "pe-${local.storage_account_name}-${k}"
+      psc_name = "psc-${local.storage_account_name}-${k}"
+      nic_name = "nic-${local.storage_account_name}-${k}"
     })
     if enabled && contains(keys(local.pe_catalog), k)
   } : {}
